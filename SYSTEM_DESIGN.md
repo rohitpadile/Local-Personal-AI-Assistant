@@ -93,49 +93,49 @@ By default, ChromaDB uses **Squared L2 Distance (Euclidean)**.
 graph TD
     %% Frontend Components
     subgraph Frontend [React Frontend]
-        UI[App.jsx Chat UI]
-        Mic[Audio Recorder]
-        Player[HTML5 Audio Player]
-        Synth[Browser speechSynthesis Fallback]
+        UI["App.jsx Chat UI"]
+        Mic["Audio Recorder"]
+        Player["HTML5 Audio Player"]
+        Synth["Browser speechSynthesis Fallback"]
     end
 
     %% Backend Components
     subgraph Backend [FastAPI Backend]
-        API[FastAPI Router - main.py]
-        Whisper[Faster-Whisper Transcription]
-        Chroma[ChromaDB Client - memory_helper.py]
-        TTS[Supertonic TTS Engine - tts_helper.py]
-        Ollama[Ollama Client]
+        API["FastAPI Router - main.py"]
+        Whisper["Faster-Whisper Transcription"]
+        Chroma["ChromaDB Client - memory_helper.py"]
+        TTS["Supertonic TTS Engine - tts_helper.py"]
+        Ollama["Ollama Client"]
     end
 
     %% Storage & Services
     subgraph Local [Local Services & Disk]
-        OllamaService[Ollama LLM Host]
-        SupertonicServer[Supertonic TTS Server :7788]
-        ChromaStore[(Chroma Vector Storage /local_memory)]
-        AudioCache[[Audio WAV Cache /static]]
+        OllamaService["Ollama LLM Host"]
+        SupertonicServer["Supertonic TTS Server (:7788)"]
+        ChromaStore[("Chroma Vector Storage (/local_memory)")]
+        AudioCache[["Audio WAV Cache (/static)"]]
     end
 
     %% Flow
     Mic -->|Record Audio| UI
-    UI -->|1. POST /api/transcribe| API
-    API -->|2. Transcribe| Whisper
-    Whisper -->|3. Transcription Text| UI
-    UI -->|4. POST /api/chat| API
-    API -->|5. Semantic Query| Chroma
-    Chroma -->|6. Load Context| ChromaStore
-    ChromaStore -->|7. Recalled Memories| API
-    API -->|8. Request response| Ollama
-    Ollama -->|9. Chat Generation| OllamaService
-    OllamaService -->|10. Text + Memory Tags| API
-    API -->|11. Extract Memory/Forget Tags| Chroma
-    Chroma -->|12. Save/Delete facts| ChromaStore
-    API -->|13. Synthesize voice| TTS
-    TTS -->|14. POST request| SupertonicServer
-    SupertonicServer -->|15. WAV audio bytes| TTS
-    TTS -->|16. Cache audio file & clean| AudioCache
-    API -->|17. Clean Text + Audio URL| UI
-    UI -->|18. Play WAV| Player
+    UI -->|"1. POST /api/transcribe"| API
+    API -->|"2. Transcribe"| Whisper
+    Whisper -->|"3. Transcription Text"| UI
+    UI -->|"4. POST /api/chat"| API
+    API -->|"5. Semantic Query"| Chroma
+    Chroma -->|"6. Load Context"| ChromaStore
+    ChromaStore -->|"7. Recalled Memories"| API
+    API -->|"8. Request response"| Ollama
+    Ollama -->|"9. Chat Generation"| OllamaService
+    OllamaService -->|"10. Text + Memory Tags"| API
+    API -->|"11. Extract Memory/Forget Tags"| Chroma
+    Chroma -->|"12. Save/Delete facts"| ChromaStore
+    API -->|"13. Synthesize voice"| TTS
+    TTS -->|"14. POST request"| SupertonicServer
+    SupertonicServer -->|"15. WAV audio bytes"| TTS
+    TTS -->|"16. Cache audio file & clean"| AudioCache
+    API -->|"17. Clean Text + Audio URL"| UI
+    UI -->|"18. Play WAV"| Player
     Player -.->|On Block/Error| Synth
 ```
 
@@ -147,3 +147,21 @@ graph TD
 -   **`backend/tts_helper.py`:** Interfaces with `supertonic` TTS on port 7788, manages custom voice style payload selection, and handles automatic 3-file audio WAV garbage collection.
 -   **`backend/main.py`:** Runs FastAPI. Defines `/api/transcribe` for voice parsing, `/api/chat` for Ollama and memory loops, and `/api/memories` for dashboard curation.
 -   **`frontend/src/App.jsx`:** React dashboard. Implements a beautiful conversational feed, handles microphone input and audio visualizer, manages custom models and drive location paths, and displays stored memories.
+
+---
+
+## 6. Key Learnings for Freshers (Vector DB vs LLM Handoff)
+
+A common point of confusion for developers starting with AI is where the **Language Model (LLM)** ends and the **Vector Database (ChromaDB)** begins. 
+
+Here is the separation of concerns in Project Peace:
+
+### 🧠 The LLM (Ollama) has NO Role in Vector Embeddings or Math
+*   **Ollama is purely a text generator.** It reads the chat history and context, and outputs text. It does not calculate vector coordinates, nor does it search the database.
+*   The LLM's only role in memory is **context extraction**. It acts as an intelligent parser, determining which parts of the conversation are worth remembering or forgetting, and formatting them into tags: `<remember>...</remember>` and `<forget>...</forget>`.
+
+### 🗄️ The Vector DB (ChromaDB) does the Heavy Mathematical Lift
+*   **ChromaDB is the actual database and math processor.** It takes the raw text snippets extracted from the LLM tags and passes them to a local SentenceTransformers model (`all-MiniLM-L6-v2`) to turn them into **384-dimensional vector coordinate arrays**.
+*   It performs the **Euclidean L2 Squared Distance** comparisons to locate which past memories are semantically related to the user's current query.
+*   **FastAPI Backend (the glue):** The Python backend functions as the orchestrator. It receives the API calls, coordinates with ChromaDB to fetch context, compiles the prompt, calls Ollama, parses the returned tags, and instructs ChromaDB to insert or delete documents based on those tags.
+
