@@ -3,44 +3,25 @@ import {
   Mic, 
   Square, 
   Settings, 
-  BookOpen, 
   RefreshCw, 
-  AlertTriangle, 
-  CheckCircle, 
-  Download, 
-  HelpCircle, 
-  Sliders, 
-  Power, 
-  Send, 
   Trash2, 
   Plus, 
   Heart,
   MessageCircle,
-  Brain
+  Brain,
+  Send,
+  Sliders
 } from 'lucide-react';
 
 const API_BASE = window.location.origin.includes("localhost:5173") ? "http://localhost:8000/api" : window.location.origin + "/api";
 
 export default function App() {
-  // Setup States
-  const [setupStatus, setSetupStatus] = useState({
-    ollama_running: false,
-    ollama_installed: false,
-    installed_models: [],
-    recommended_models: [],
-    models_path: ''
-  });
-  const [selectedModel, setSelectedModel] = useState("qwen2.5:1.5b");
-  const [isSettingUpModel, setIsSettingUpModel] = useState(false);
-  const [setupProgress, setSetupProgress] = useState(0);
-  const [setupStatusText, setSetupStatusText] = useState("");
-  const [storageInfo, setStorageInfo] = useState({ models_path: '', available_drives: [] });
-  const [customModelPath, setCustomModelPath] = useState('');
-  const [storageConfigured, setStorageConfigured] = useState(false);
-  
   // App Navigation States
   const [activeTab, setActiveTab] = useState("chat"); // chat | memories
   const [showSettings, setShowSettings] = useState(false);
+  const [ollamaRunning, setOllamaRunning] = useState(true);
+  const [installedModels, setInstalledModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState("qwen2.5:1.5b");
   
   // Chat & Memory States
   const [messages, setMessages] = useState([
@@ -57,7 +38,7 @@ export default function App() {
   // Voice Recording States
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [processingStep, setProcessingStep] = useState(""); // transcribing | thinking
+  const [processingStep, setProcessingStep] = useState("");
   const [liveTranscript, setLiveTranscript] = useState("");
   const [debugInfo, setDebugInfo] = useState("");
   const [micVolume, setMicVolume] = useState(Array(15).fill(4));
@@ -77,7 +58,7 @@ export default function App() {
 
   // Load Setup Status and Memories
   useEffect(() => {
-    fetchSetupStatus();
+    fetchStatus();
     fetchMemories();
   }, []);
 
@@ -86,34 +67,25 @@ export default function App() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isProcessing]);
 
-  const fetchSetupStatus = async () => {
+  const fetchStatus = async () => {
     try {
       const res = await fetch(`${API_BASE}/setup/status`);
       if (res.ok) {
         const data = await res.json();
-        setSetupStatus(data);
-        if (data.models_path) {
-          setCustomModelPath(data.models_path);
-          setStorageConfigured(true);
+        setOllamaRunning(data.ollama_running);
+        setInstalledModels(data.installed_models || []);
+        
+        // Pick the first installed model as default if available
+        if (data.installed_models && data.installed_models.length > 0) {
+          if (!data.installed_models.includes(selectedModel)) {
+            setSelectedModel(data.installed_models[0]);
+          }
         }
-        if (data.installed_models.length > 0 && !data.installed_models.includes(selectedModel)) {
-          setSelectedModel(data.installed_models[0]);
-        }
+      } else {
+        setOllamaRunning(false);
       }
     } catch (err) {
-      console.error("Error fetching setup status:", err);
-    }
-    
-    try {
-      const sRes = await fetch(`${API_BASE}/setup/storage`);
-      if (sRes.ok) {
-        const sData = await sRes.json();
-        setStorageInfo(sData);
-        if (!customModelPath) setCustomModelPath(sData.models_path);
-        setStorageConfigured(true);
-      }
-    } catch (err) {
-      console.error("Error fetching storage info:", err);
+      setOllamaRunning(false);
     }
   };
 
@@ -129,96 +101,6 @@ export default function App() {
     }
   };
 
-  const startOllama = async () => {
-    try {
-      setSetupStatusText("Starting Ollama background process...");
-      const res = await fetch(`${API_BASE}/setup/install`, { method: 'POST' });
-      if (res.ok) {
-        setTimeout(fetchSetupStatus, 3000);
-      }
-    } catch (err) {
-      alert("Failed to connect to backend. Make sure your FastAPI backend is running.");
-    }
-  };
-
-  const saveStoragePath = async () => {
-    try {
-      const path = customModelPath.trim();
-      if (!path) return;
-      const res = await fetch(`${API_BASE}/setup/storage?path=${encodeURIComponent(path)}`, { method: 'POST' });
-      if (res.ok) {
-        setStorageConfigured(true);
-        await fetchSetupStatus();
-      }
-    } catch (err) {
-      alert("Failed to save storage path: " + err.message);
-    }
-  };
-
-  const pullModel = async (modelId) => {
-    const modelToUse = modelId || selectedModel;
-    if (modelId) setSelectedModel(modelId);
-    setIsSettingUpModel(true);
-    setSetupProgress(0);
-    setSetupStatusText(`Downloading ${modelToUse}... This can take a few minutes.`);
-    
-    try {
-      const response = await fetch(`${API_BASE}/setup/pull-model?model=${modelToUse}`);
-      if (!response.ok) throw new Error("Failed to start pull model stream");
-      
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop();
-
-        for (const line of lines) {
-          if (line.trim()) {
-            try {
-              const payload = JSON.parse(line);
-              if (payload.status === "downloading" && payload.total) {
-                const percent = Math.round((payload.completed / payload.total) * 100);
-                const mbDone = (payload.completed / 1024 / 1024).toFixed(0);
-                const mbTotal = (payload.total / 1024 / 1024).toFixed(0);
-                setSetupProgress(percent);
-                setSetupStatusText(`Downloading: ${mbDone} MB / ${mbTotal} MB (${percent}%)`);
-              } else if (payload.status === "pulling manifest") {
-                setSetupStatusText("Connecting to Ollama library...");
-                setSetupProgress(0);
-              } else if (payload.status && payload.status.startsWith("pulling ")) {
-                setSetupStatusText(`Pulling model layers...`);
-                setSetupProgress(1);
-              } else if (payload.status === "verifying sha256 digest") {
-                setSetupProgress(99);
-                setSetupStatusText("Verifying download integrity...");
-              } else if (payload.status === "writing manifest") {
-                setSetupProgress(99);
-                setSetupStatusText("Finalizing model...");
-              } else if (payload.status === "success") {
-                setSetupProgress(100);
-                setSetupStatusText("Model downloaded successfully!");
-              } else if (payload.status) {
-                setSetupStatusText(payload.status);
-              }
-            } catch (e) {}
-          }
-        }
-      }
-      
-      await fetchSetupStatus();
-      setIsSettingUpModel(false);
-    } catch (err) {
-      alert("Error pulling model: " + err.message);
-      setIsSettingUpModel(false);
-    }
-  };
-
   // Conversational Send Handler
   const handleSend = async (e) => {
     if (e) e.preventDefault();
@@ -230,7 +112,6 @@ export default function App() {
   };
 
   const processMessage = async (text) => {
-    // Add user message to UI
     const userMsgObj = { sender: "user", text, timestamp: new Date().toISOString() };
     setMessages(prev => [...prev, userMsgObj]);
     setIsProcessing(true);
@@ -245,8 +126,6 @@ export default function App() {
 
       if (res.ok) {
         const data = await res.json();
-        
-        // Add AI response to UI
         const aiMsgObj = { 
           sender: "peace", 
           text: data.response, 
@@ -254,12 +133,8 @@ export default function App() {
           audioUrl: data.audio_url 
         };
         setMessages(prev => [...prev, aiMsgObj]);
-        
-        // Trigger voice feedback
         speakResponse(data.response, data.audio_url);
-        
-        // Refresh memories in background in case any new ones were auto-extracted
-        fetchMemories();
+        fetchMemories(); // Refresh memories in background
       } else {
         alert("Oops, Peace failed to process that. Please check if Ollama is running.");
       }
@@ -272,9 +147,8 @@ export default function App() {
     }
   };
 
-  // Speaks response (Prepares Supertonic WAV or falls back to Web Speech API)
+  // Audio Playback
   const speakResponse = (text, audioUrl) => {
-    // Stop any current voice
     if (activeAudioRef.current) {
       activeAudioRef.current.pause();
       activeAudioRef.current = null;
@@ -284,36 +158,27 @@ export default function App() {
     }
 
     if (audioUrl) {
-      // Play local WAV generated by Supertonic
       const fullAudioUrl = API_BASE.replace('/api', '') + audioUrl;
       const audio = new Audio(fullAudioUrl);
       activeAudioRef.current = audio;
       audio.play().catch(err => {
-        console.warn("Local speech WAV playback blocked or failed, falling back to browser synthesis.", err);
-        speakBrowserFallback(text);
+        console.warn("WAV audio blocked, falling back to browser TTS.", err);
+        speakBrowser(text);
       });
     } else {
-      speakBrowserFallback(text);
+      speakBrowser(text);
     }
   };
 
-  const speakBrowserFallback = (text) => {
+  const speakBrowser = (text) => {
     if ('speechSynthesis' in window) {
-      const utterance = new SynthesisUtteranceFallback(text);
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+      const voices = window.speechSynthesis.getVoices();
+      const naturalVoice = voices.find(v => v.name.includes("Natural") || v.name.includes("Google") || v.name.includes("Hazel") || v.name.includes("Zira"));
+      if (naturalVoice) utterance.voice = naturalVoice;
       window.speechSynthesis.speak(utterance);
     }
-  };
-
-  const SynthesisUtteranceFallback = function(text) {
-    const utt = new SpeechSynthesisUtterance(text);
-    utt.lang = 'en-US';
-    // Try to find a nice gentle voice
-    const voices = window.speechSynthesis.getVoices();
-    const gentleVoice = voices.find(v => v.name.includes("Natural") || v.name.includes("Google") || v.name.includes("Hazel") || v.name.includes("Zira"));
-    if (gentleVoice) {
-      utt.voice = gentleVoice;
-    }
-    return utt;
   };
 
   // Audio Recording handlers
@@ -351,7 +216,6 @@ export default function App() {
         processAudio(audioBlob);
       };
 
-      // Mic visualizer
       audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
       const source = audioContextRef.current.createMediaStreamSource(stream);
       analyserRef.current = audioContextRef.current.createAnalyser();
@@ -374,9 +238,8 @@ export default function App() {
       updateVisualizer();
       mediaRecorderRef.current.start(250);
       setIsRecording(true);
-      setDebugInfo("Microphone active. Whisper is ready to transcribe.");
+      setDebugInfo("Microphone active. Speak naturally.");
 
-      // Browser live speech recognition for visual feedback
       const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (SpeechRec) {
         const rec = new SpeechRec();
@@ -396,7 +259,7 @@ export default function App() {
         speechRecRef.current = rec;
       }
     } catch (err) {
-      setDebugInfo("Failed to open microphone. Check browser permissions.");
+      setDebugInfo("Failed to open microphone.");
     }
   };
 
@@ -414,7 +277,7 @@ export default function App() {
   };
 
   const processAudio = async (audioBlob) => {
-    setProcessingStep("🎤 Transcribing speech offline with Whisper...");
+    setProcessingStep("🎤 Transcribing speech offline...");
     const formData = new FormData();
     formData.append("file", audioBlob, "voice_input.webm");
     
@@ -481,123 +344,9 @@ export default function App() {
     }
   };
 
-  const handleShutdown = async () => {
-    if (window.confirm("Shut down the Peace backend companion?")) {
-      try {
-        await fetch(`${API_BASE}/shutdown`, { method: 'POST' });
-        alert("Peace backend has stopped. You can close this window.");
-      } catch (err) {
-        alert("Companion shutdown successfully!");
-      }
-    }
-  };
-
-  const isModelReady = setupStatus.installed_models.includes(selectedModel);
-  const isOllamaRunning = setupStatus.ollama_running;
-
   return (
     <div className="app-container">
-      {/* 1. Setup Overlay Screens */}
-      {(!isOllamaRunning || !isModelReady || isSettingUpModel) && (
-        <div className="setup-overlay">
-          <div className="setup-box">
-            <div className="logo-badge" style={{ width: '48px', height: '48px', margin: '0 auto 1.5rem' }}>
-              <Heart size={24} />
-            </div>
-            
-            {!storageConfigured ? (
-              <>
-                <h2 style={{ marginBottom: '0.5rem' }}>📦 Choose Storage for Local Brain</h2>
-                <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-                  AI models are large (several GBs). Select a drive to store them.
-                </p>
-
-                {storageInfo.available_drives.length > 0 && (
-                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap', justifyContent: 'center' }}>
-                    {storageInfo.available_drives.map(drive => (
-                      <button
-                        key={drive}
-                        className="btn btn-secondary"
-                        style={{
-                          padding: '0.4rem 0.9rem',
-                          border: customModelPath.startsWith(drive) ? '2px solid var(--accent-primary)' : undefined,
-                        }}
-                        onClick={() => setCustomModelPath(drive + '\\OllamaModels')}
-                      >
-                        {drive} {drive.startsWith('D') ? '⭐' : ''}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <div className="form-group" style={{ textAlign: 'left', marginBottom: '1.5rem' }}>
-                  <label>Storage Path:</label>
-                  <input
-                    className="form-control"
-                    type="text"
-                    value={customModelPath}
-                    onChange={(e) => setCustomModelPath(e.target.value)}
-                  />
-                </div>
-
-                <button className="btn" onClick={saveStoragePath} style={{ width: '100%' }}>
-                  <Download size={16} /> Confirm Storage & Continue
-                </button>
-              </>
-            ) : !isOllamaRunning ? (
-              <>
-                <h2 style={{ marginBottom: '0.75rem' }}>Activate Offline AI</h2>
-                <p style={{ color: 'var(--text-muted)', marginBottom: '1rem', fontSize: '0.95rem' }}>
-                  Peace runs entirely offline. Launching the local Ollama service to start.
-                </p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  <button className="btn" onClick={startOllama}>
-                    <Play size={16} /> Start Local AI Engine
-                  </button>
-                  <button className="btn btn-secondary" onClick={fetchSetupStatus}>
-                    <RefreshCw size={16} /> Check Status
-                  </button>
-                </div>
-              </>
-            ) : isSettingUpModel ? (
-              <>
-                <h2 style={{ marginBottom: '0.5rem' }}>Downloading local intelligence...</h2>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{setupStatusText}</p>
-                <div className="progress-container">
-                  <div className="progress-bar" style={{ width: `${setupProgress}%` }}></div>
-                </div>
-                <p style={{ color: 'var(--accent-secondary)', fontWeight: 'bold' }}>{setupProgress}%</p>
-              </>
-            ) : (
-              <>
-                <h2 style={{ marginBottom: '0.75rem' }}>Model Download Required</h2>
-                <p style={{ color: 'var(--text-muted)', marginBottom: '1.25rem', fontSize: '0.95rem' }}>
-                  The model <strong>{selectedModel}</strong> needs to be downloaded locally to your computer.
-                </p>
-                <div className="form-group" style={{ textAlign: 'left', marginBottom: '1.5rem' }}>
-                  <label>Select AI Model size:</label>
-                  <select 
-                    className="form-control" 
-                    value={selectedModel} 
-                    onChange={(e) => setSelectedModel(e.target.value)}
-                  >
-                    <option value="qwen2.5:0.5b">⚡ Qwen 2.5 0.5B — 400 MB (Very Fast)</option>
-                    <option value="qwen2.5:1.5b">🌟 Qwen 2.5 1.5B — 1 GB (Recommended)</option>
-                    <option value="qwen2.5:3b">✅ Qwen 2.5 3B — 2 GB (More Intelligent)</option>
-                    <option value="phi3.5:mini">🔵 Phi 3.5 Mini — 2.2 GB (Conversational)</option>
-                    <option value="llama3.1:8b">🔴 Llama 3.1 8B — 4.7 GB (Highest Quality)</option>
-                  </select>
-                </div>
-                <button className="btn" onClick={() => pullModel()} style={{ width: '100%' }}>
-                  <Download size={16} /> Download & Start
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* 2. App Header */}
+      {/* Header */}
       <header>
         <div className="brand-section">
           <div className="logo-badge">
@@ -605,7 +354,7 @@ export default function App() {
           </div>
           <div>
             <h1>Peace</h1>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Offline Personal Companion</p>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Offline AI Companion</p>
           </div>
         </div>
 
@@ -638,6 +387,27 @@ export default function App() {
         </div>
       </header>
 
+      {/* Warning Banner if Ollama is Offline */}
+      {!ollamaRunning && (
+        <div style={{
+          background: 'rgba(239, 68, 68, 0.1)',
+          border: '1px solid rgba(239, 68, 68, 0.3)',
+          borderRadius: '12px',
+          padding: '0.75rem 1.25rem',
+          marginBottom: '1.5rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between'
+        }}>
+          <span style={{ fontSize: '0.9rem', color: 'var(--danger)' }}>
+            ⚠️ Local Ollama service is not responding. Please make sure Ollama is running in your terminal (`ollama serve`).
+          </span>
+          <button className="btn btn-secondary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} onClick={fetchStatus}>
+            Retry Connection
+          </button>
+        </div>
+      )}
+
       {/* Settings Panel */}
       {showSettings && (
         <div className="glass-card" style={{ marginBottom: '1.5rem', padding: '1.25rem' }}>
@@ -645,51 +415,39 @@ export default function App() {
             <Sliders size={16} color="var(--accent-secondary)" /> Companion Configuration
           </h3>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem' }}>
             <div className="form-group" style={{ flex: '1', minWidth: '200px' }}>
-              <label>Active AI Model:</label>
-              <select 
-                className="form-control" 
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-              >
-                {setupStatus.installed_models.map(m => (
-                  <option key={m} value={m}>✅ {m} (Installed)</option>
-                ))}
-                {setupStatus.recommended_models.filter(m => !setupStatus.installed_models.includes(m)).map(m => (
-                  <option key={m} value={m}>⬇️ {m} (Needs Download)</option>
-                ))}
-              </select>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: '1', minWidth: '180px', marginTop: '1.2rem' }}>
-              {!isModelReady ? (
-                <button className="btn" onClick={() => pullModel()} style={{ width: '100%' }}>
-                  <Download size={14} /> Download Model
-                </button>
+              <label>Ollama Model:</label>
+              {installedModels.length > 0 ? (
+                <select 
+                  className="form-control" 
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                >
+                  {installedModels.map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
               ) : (
-                <div className="badge badge-success" style={{ width: '100%', justifyContent: 'center', padding: '0.6rem' }}>
-                  <CheckCircle size={14} /> AI Model Ready
-                </div>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  placeholder="e.g. qwen2.5:1.5b"
+                />
               )}
             </div>
-          </div>
-
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem' }}>
-            <div style={{ flex: 1, minWidth: '200px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              📦 <strong>Models directory:</strong> {customModelPath || setupStatus.models_path || 'D:\\OllamaModels'}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: '1', minWidth: '180px', marginTop: '1.2rem' }}>
+              <button className="btn btn-secondary" onClick={fetchStatus} style={{ width: '100%' }}>
+                <RefreshCw size={14} /> Refresh Models
+              </button>
             </div>
-            <button 
-              className="btn btn-secondary" 
-              onClick={handleShutdown} 
-              style={{ color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)', minWidth: '160px' }}
-            >
-              <Power size={14} /> Shutdown Companion
-            </button>
           </div>
         </div>
       )}
 
-      {/* 3. Core App Grid */}
+      {/* Core App Grid */}
       <div className="dashboard-grid">
         
         {/* Left Side: Mic Controller / Voice Input */}
@@ -730,7 +488,7 @@ export default function App() {
             ))}
           </div>
 
-          {/* Transcript / Debug Info */}
+          {/* Live transcript display while recording */}
           {liveTranscript && isRecording && (
             <div style={{
               width: '100%',
