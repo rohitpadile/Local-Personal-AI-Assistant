@@ -10,7 +10,8 @@ import {
   MessageCircle,
   Brain,
   Send,
-  Sliders
+  Sliders,
+  Download
 } from 'lucide-react';
 
 const API_BASE = window.location.origin.includes("localhost:5173") ? "http://localhost:8000/api" : window.location.origin + "/api";
@@ -30,6 +31,15 @@ export default function App() {
   const [setupStatusText, setSetupStatusText] = useState("");
   const [storageInfo, setStorageInfo] = useState({ models_path: '', available_drives: [] });
   const [customModelPath, setCustomModelPath] = useState('');
+
+  // Phone Call / Auto-Listen States
+  const [isPhoneCallMode, setIsPhoneCallMode] = useState(false);
+  const isPhoneCallModeRef = useRef(false);
+  const silenceTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    isPhoneCallModeRef.current = isPhoneCallMode;
+  }, [isPhoneCallMode]);
   
   // Chat & Memory States
   const [messages, setMessages] = useState([
@@ -250,10 +260,10 @@ export default function App() {
   // Audio Playback
   const speakResponse = (text, audioUrl) => {
     if (activeAudioRef.current) {
-      activeAudioRef.current.pause();
+      try { activeAudioRef.current.pause(); } catch(_) {}
       activeAudioRef.current = null;
     }
-    if ('speechSynthesis' in window) {
+    if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
 
@@ -261,6 +271,15 @@ export default function App() {
       const fullAudioUrl = API_BASE.replace('/api', '') + audioUrl;
       const audio = new Audio(fullAudioUrl);
       activeAudioRef.current = audio;
+      
+      // Auto-listen loop: restart recording when voice file finishes playing
+      audio.onended = () => {
+        activeAudioRef.current = null;
+        if (isPhoneCallModeRef.current) {
+          startRecording();
+        }
+      };
+
       audio.play().catch(err => {
         console.warn("WAV audio blocked, falling back to browser TTS.", err);
         speakBrowser(text);
@@ -277,12 +296,34 @@ export default function App() {
       const voices = window.speechSynthesis.getVoices();
       const naturalVoice = voices.find(v => v.name.includes("Natural") || v.name.includes("Google") || v.name.includes("Hazel") || v.name.includes("Zira"));
       if (naturalVoice) utterance.voice = naturalVoice;
+
+      // Auto-listen loop: restart recording when browser TTS ends
+      utterance.onend = () => {
+        if (isPhoneCallModeRef.current) {
+          startRecording();
+        }
+      };
+
       window.speechSynthesis.speak(utterance);
     }
   };
 
   // Audio Recording handlers
   const toggleRecording = () => {
+    // Barge-in manually: if assistant is currently speaking, stop it and start listening immediately
+    if (activeAudioRef.current || (window.speechSynthesis && window.speechSynthesis.speaking)) {
+      if (activeAudioRef.current) {
+        try { activeAudioRef.current.pause(); } catch(_) {}
+        activeAudioRef.current = null;
+      }
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+      setDebugInfo("Interrupted assistant.");
+      startRecording();
+      return;
+    }
+
     if (isRecording) {
       stopRecording();
     } else {
@@ -347,13 +388,37 @@ export default function App() {
         rec.interimResults = true;
         rec.lang = 'en-US';
         rec.onresult = (e) => {
+          // Voice barge-in: If the assistant is speaking and the user starts speaking, stop playback
+          if (activeAudioRef.current || (window.speechSynthesis && window.speechSynthesis.speaking)) {
+            if (activeAudioRef.current) {
+              try { activeAudioRef.current.pause(); } catch(_) {}
+              activeAudioRef.current = null;
+            }
+            if (window.speechSynthesis) {
+              window.speechSynthesis.cancel();
+            }
+            setDebugInfo("Voice barge-in detected! Stopping assistant.");
+          }
+
           let interim = '';
           let final = '';
           for (let i = e.resultIndex; i < e.results.length; i++) {
             if (e.results[i].isFinal) final += e.results[i][0].transcript;
             else interim += e.results[i][0].transcript;
           }
-          setLiveTranscript((prev) => (final ? prev + final + ' ' : prev) + interim);
+          
+          const transcript = (final ? final + ' ' : '') + interim;
+          setLiveTranscript(transcript);
+
+          // If Phone Call Mode is active, automatically trigger submission after 1.8 seconds of silence
+          if (isPhoneCallModeRef.current) {
+            if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+            silenceTimeoutRef.current = setTimeout(() => {
+              if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+                stopRecording();
+              }
+            }, 1800);
+          }
         };
         rec.start();
         speechRecRef.current = rec;
@@ -364,6 +429,10 @@ export default function App() {
   };
 
   const stopRecording = () => {
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current);
+      silenceTimeoutRef.current = null;
+    }
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       if (speechRecRef.current) {
@@ -666,6 +735,35 @@ export default function App() {
           <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', maxWidth: '300px', margin: '0.5rem 0' }}>
             Hold the mic button and share your thoughts. Peace will listen, transcribe, and talk back offline.
           </p>
+
+          <div style={{ display: 'flex', gap: '0.5rem', width: '100%', justifyContent: 'center', margin: '0.5rem 0 1rem 0' }}>
+            <button 
+              className={`btn btn-secondary ${isPhoneCallMode ? 'active' : ''}`}
+              style={{
+                fontSize: '0.82rem',
+                padding: '0.45rem 1rem',
+                borderRadius: '20px',
+                border: isPhoneCallMode ? '1.5px solid var(--accent-primary)' : '1px solid var(--border-color)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                background: isPhoneCallMode ? 'rgba(139, 92, 246, 0.15)' : 'rgba(255,255,255,0.03)',
+                color: isPhoneCallMode ? 'var(--accent-secondary)' : 'var(--text-main)',
+                fontWeight: '600'
+              }}
+              onClick={() => {
+                const nextMode = !isPhoneCallMode;
+                setIsPhoneCallMode(nextMode);
+                if (nextMode) {
+                  startRecording();
+                } else {
+                  stopRecording();
+                }
+              }}
+            >
+              📞 {isPhoneCallMode ? "Phone Mode: Listening..." : "Start Phone Call Mode (Auto)"}
+            </button>
+          </div>
 
           <div className="mic-container">
             <button 
