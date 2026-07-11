@@ -371,18 +371,34 @@ def process_chat(req: ChatRequest):
 def shutdown_server():
     log_debug("Shutdown requested via API")
     
-    # Terminate local Supertonic server
+    # 1. Terminate Supertonic TTS server (port 7788)
     try:
         import subprocess
         subprocess.run(["taskkill", "/f", "/im", "supertonic.exe"], capture_output=True)
-        print("[SHUTDOWN] Terminated Supertonic TTS server.")
+        print("[SHUTDOWN] Terminated Supertonic TTS process.")
     except Exception as e:
-        print(f"[SHUTDOWN WARNING] Failed to kill Supertonic process: {e}")
+        print(f"[SHUTDOWN WARNING] Failed to kill Supertonic: {e}")
 
+    # 2. Terminate Vite Frontend Server (port 5173)
+    try:
+        import subprocess
+        cmd = 'powershell -Command "Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"'
+        subprocess.run(cmd, shell=True, capture_output=True)
+        print("[SHUTDOWN] Terminated Vite dev server.")
+    except Exception as e:
+        print(f"[SHUTDOWN WARNING] Failed to kill Vite: {e}")
+
+    # 3. Terminate FastAPI Backend Server (port 8000)
     import signal
     def kill_process():
         time.sleep(0.5)
-        os.kill(os.getpid(), signal.SIGTERM)
+        try:
+            # Force kill this python process ID on Windows
+            os.kill(os.getpid(), signal.SIGTERM)
+        except Exception:
+            pass
+        os._exit(0)
+        
     threading.Thread(target=kill_process, daemon=True).start()
     return {"status": "success", "message": "All servers are shutting down..."}
 

@@ -1,23 +1,40 @@
 @echo off
 title Peace - Startup Launcher
-echo Starting Peace AI Companion...
+echo ===================================================
+echo   Peace AI Companion - Headless Startup
+echo ===================================================
+echo.
 
-:: Start Supertonic TTS Server
-echo Launching Supertonic TTS server...
-start "Supertonic TTS" cmd /c "backend\.venv\Scripts\supertonic.exe serve --port 7788"
+:: 1. Clean up any leftover background servers from previous runs (using safe pipeline check)
+echo [1/4] Cleaning up any orphaned servers...
+powershell -Command "Get-NetTCPConnection -LocalPort 7788 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
+powershell -Command "Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
+powershell -Command "Get-NetTCPConnection -LocalPort 5173 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
+timeout /t 1 /nobreak >nul
 
-:: Start Backend
-echo Launching backend server...
-start "Peace Backend" /D "%~dp0backend" cmd /c ".venv\Scripts\python.exe main.py"
+:: 2. Launch Supertonic TTS Server in the background (Hidden)
+echo [2/4] Launching Supertonic TTS server (Silent)...
+powershell -Command "Start-Process -FilePath 'backend\.venv\Scripts\supertonic.exe' -ArgumentList 'serve --port 7788' -WorkingDirectory 'backend' -WindowStyle Hidden"
 
-:: Start Frontend
-echo Launching frontend server...
-start "Peace Frontend" /D "%~dp0frontend" cmd /c "npm run dev"
+:: 3. Launch FastAPI Python Backend in the background (Hidden)
+echo [3/4] Launching Peace Backend server (Silent)...
+powershell -Command "Start-Process -FilePath 'backend\.venv\Scripts\python.exe' -ArgumentList 'main.py' -WorkingDirectory 'backend' -WindowStyle Hidden"
 
-:: Open Browser (wait 3 seconds for servers to initialize)
+:: 4. Launch Vite Frontend Dev Server in the background (Hidden)
+echo [4/4] Launching React Frontend server (Silent)...
+powershell -Command "Start-Process -FilePath 'cmd.exe' -ArgumentList '/c npm run dev' -WorkingDirectory 'frontend' -WindowStyle Hidden"
+
+:: 5. Open browser tab
+echo.
 echo Opening browser...
-timeout /t 3 /nobreak >nul
+timeout /t 4 /nobreak >nul
 start http://localhost:5173
 
-echo Done! You can minimize the terminal windows. Close them to stop Peace.
+echo.
+echo ===================================================
+echo   Peace is now running headlessly in the background!
+echo   To close all servers, go to the Settings panel 
+echo   in the browser and click 'Terminate All Servers'.
+echo ===================================================
+timeout /t 3 /nobreak >nul
 exit
