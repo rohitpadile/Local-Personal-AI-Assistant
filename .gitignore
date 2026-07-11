@@ -45,6 +45,10 @@ frontend/.eslintcache
 backend/whisper-model*/
 backend/whisper-small*/
 backend/whisper-model/
+backend/local_memory/
+backend/static/speech_*.wav
+backend/static/speech_*.mp3
+
 
 # --- Hugging Face & Cache Overrides ---
 .cache/
