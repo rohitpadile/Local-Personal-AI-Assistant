@@ -291,7 +291,7 @@ def process_chat(req: ChatRequest):
         "Always speak in a warm, caring, and wise tone.\n\n"
         f"CRITICAL USER CONTEXT:\n{memories_context}\n\n"
         "Guidelines:\n"
-        "1. Respond directly and conversationally. STRICT REQUIREMENT: Keep your responses extremely short (strictly 1 to 2 sentences max) for real-time snappy voice replies.\n"
+        "1. Respond directly and conversationally. Keep your responses relatively short and warm (typically 2-3 sentences max) for snappy voice replies, UNLESS the user explicitly requests a long explanation, teaching, lists, or detailed analysis.\n"
         "2. If the user shares any personal facts, preferences, emotional states, or stories about themselves, you MUST note it for memory. "
         "At the very end of your response, write what you want to remember about them inside `<remember>...</remember>` tags. "
         "Example: If they say 'I am feeling anxious about my new job', your response should end with `<remember>User feels anxious about their new job</remember>`. "
