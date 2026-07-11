@@ -12,6 +12,30 @@ else:
 # Ensure static folder exists
 os.makedirs(CACHE_DIR, exist_ok=True)
 
+def cleanup_old_voice_files():
+    """Keeps only the 3 most recent speech WAV files in the cache to prevent disk accumulation."""
+    try:
+        files = [
+            os.path.join(CACHE_DIR, f) 
+            for f in os.listdir(CACHE_DIR) 
+            if f.startswith("speech_") and f.endswith(".wav")
+        ]
+        if len(files) <= 3:
+            return
+            
+        # Sort files by modification time
+        files.sort(key=os.path.getmtime)
+        
+        # Delete oldest files, keeping only the 3 newest
+        for f in files[:-3]:
+            try:
+                os.remove(f)
+                print(f"[TTS CLEANUP] Deleted old voice file: {os.path.basename(f)}")
+            except Exception as delete_err:
+                pass
+    except Exception as e:
+        print(f"[TTS CLEANUP WARNING] Failed to clean old voice files: {e}")
+
 def generate_speech_file(text: str, filename: str = "response.wav", voice: str = "F1"):
     """Generates a wav speech file from text by calling the local Supertonic API server."""
     payload = {
@@ -29,6 +53,10 @@ def generate_speech_file(text: str, filename: str = "response.wav", voice: str =
             with open(output_path, "wb") as f:
                 f.write(response.content)
             print(f"[TTS SUCCESS] Voice file saved: {output_path}")
+            
+            # Clean up old files in background/inline to save space
+            cleanup_old_voice_files()
+            
             return filename
         else:
             print(f"[TTS WARNING] Supertonic responded with error {response.status_code}: {response.text}")

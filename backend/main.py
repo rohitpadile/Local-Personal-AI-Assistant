@@ -285,7 +285,10 @@ def process_chat(req: ChatRequest):
         "2. If the user shares any personal facts, preferences, emotional states, or stories about themselves, you MUST note it for memory. "
         "At the very end of your response, write what you want to remember about them inside `<remember>...</remember>` tags. "
         "Example: If they say 'I am feeling anxious about my new job', your response should end with `<remember>User feels anxious about their new job</remember>`. "
-        "Do not mention these tags to the user, just output them at the end. You can output multiple tags if there are multiple facts."
+        "Do not mention these tags to the user, just output them at the end. You can output multiple tags if there are multiple facts.\n"
+        "3. If the user explicitly asks you to forget a fact, wipe out a memory, or corrects a detail you previously remembered, you MUST output what needs to be forgotten inside `<forget>...</forget>` tags at the very end of your response. "
+        "Example: If they say 'forget that I like singing songs' or 'wipe that memory out', your response should end with `<forget>User likes singing songs</forget>`. "
+        "Do not mention these tags to the user, just output them at the end. You can output multiple tags if needed."
     )
 
     payload = {
@@ -319,8 +322,24 @@ def process_chat(req: ChatRequest):
             if fact_cleaned:
                 memory_helper.add_memory(fact_cleaned, category="auto")
 
-        # Strip tags from the user-facing text
-        clean_text = remember_pattern.sub("", llm_text).strip()
+        # 4. Parse <forget> tags
+        forget_pattern = re.compile(r'<forget>(.*?)</forget>', re.DOTALL)
+        forget_memories = forget_pattern.findall(llm_text)
+        
+        # Delete matching memories semantically
+        for fact in forget_memories:
+            fact_cleaned = fact.strip()
+            if fact_cleaned:
+                print(f"[MEMORY] Attempting to auto-forget matching: '{fact_cleaned}'")
+                matches = memory_helper.search_memories(fact_cleaned, limit=1)
+                if matches:
+                    match_id = matches[0]["id"]
+                    memory_helper.delete_memory(match_id)
+                    print(f"[MEMORY SUCCESS] Automatically deleted matched memory: '{matches[0]['text']}' (ID: {match_id})")
+
+        # Strip both remember and forget tags from the user-facing text
+        clean_text = remember_pattern.sub("", llm_text)
+        clean_text = forget_pattern.sub("", clean_text).strip()
 
         # 4. Generate local text-to-speech audio via Supertonic
         # Generate a unique filename for speech cache to avoid audio conflict
