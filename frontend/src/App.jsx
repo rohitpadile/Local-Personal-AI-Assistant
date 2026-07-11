@@ -23,10 +23,12 @@ export default function App() {
   const [installedModels, setInstalledModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState("qwen2.5:1.5b");
   
-  // Model Pulling States
+  // Model Pulling & Storage States
   const [isSettingUpModel, setIsSettingUpModel] = useState(false);
   const [setupProgress, setSetupProgress] = useState(0);
   const [setupStatusText, setSetupStatusText] = useState("");
+  const [storageInfo, setStorageInfo] = useState({ models_path: '', available_drives: [] });
+  const [customModelPath, setCustomModelPath] = useState('');
   
   // Chat & Memory States
   const [messages, setMessages] = useState([
@@ -91,6 +93,20 @@ export default function App() {
       }
     } catch (err) {
       setOllamaRunning(false);
+    }
+    
+    // Fetch storage path and drives
+    try {
+      const sRes = await fetch(`${API_BASE}/setup/storage`);
+      if (sRes.ok) {
+        const sData = await sRes.json();
+        setStorageInfo(sData);
+        if (sData.models_path) {
+          setCustomModelPath(sData.models_path);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching storage info:", err);
     }
   };
 
@@ -167,6 +183,20 @@ export default function App() {
     } catch (err) {
       alert("Error pulling model: " + err.message);
       setIsSettingUpModel(false);
+    }
+  };
+
+  const saveStoragePath = async () => {
+    try {
+      const path = customModelPath.trim();
+      if (!path) return;
+      const res = await fetch(`${API_BASE}/setup/storage?path=${encodeURIComponent(path)}`, { method: 'POST' });
+      if (res.ok) {
+        alert("Storage path updated successfully!");
+        await fetchStatus();
+      }
+    } catch (err) {
+      alert("Failed to save storage path: " + err.message);
     }
   };
 
@@ -484,7 +514,8 @@ export default function App() {
             <Sliders size={16} color="var(--accent-secondary)" /> Companion Configuration
           </h3>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            {/* Model Selector */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'flex-end' }}>
               <div className="form-group" style={{ flex: '1', minWidth: '220px' }}>
                 <label>Select AI Model:</label>
@@ -495,17 +526,17 @@ export default function App() {
                   disabled={isSettingUpModel}
                 >
                   {/* Recommended list */}
-                  <option value="qwen2.5:0.5b">⚡ Qwen 2.5 0.5B — 400 MB (Fastest)</option>
-                  <option value="qwen2.5:1.5b">🌟 Qwen 2.5 1.5B — 1 GB (Recommended)</option>
-                  <option value="qwen2.5:3b">✅ Qwen 2.5 3B — 2 GB (Accurate)</option>
-                  <option value="phi3.5:mini">🔵 Phi 3.5 Mini — 2.2 GB (Conversational)</option>
-                  <option value="llama3.1:8b">🔴 Llama 3.1 8B — 4.7 GB (High Quality)</option>
+                  <option value="qwen2.5:0.5b">⚡ Qwen 2.5 0.5B — 400 MB {installedModels.includes("qwen2.5:0.5b") ? "(Downloaded)" : "(Not Downloaded)"}</option>
+                  <option value="qwen2.5:1.5b">🌟 Qwen 2.5 1.5B — 1 GB {installedModels.includes("qwen2.5:1.5b") ? "(Downloaded)" : "(Not Downloaded)"}</option>
+                  <option value="qwen2.5:3b">✅ Qwen 2.5 3B — 2 GB {installedModels.includes("qwen2.5:3b") ? "(Downloaded)" : "(Not Downloaded)"}</option>
+                  <option value="phi3.5:mini">🔵 Phi 3.5 Mini — 2.2 GB {installedModels.includes("phi3.5:mini") ? "(Downloaded)" : "(Not Downloaded)"}</option>
+                  <option value="llama3.1:8b">🔴 Llama 3.1 8B — 4.7 GB {installedModels.includes("llama3.1:8b") ? "(Downloaded)" : "(Not Downloaded)"}</option>
                   
                   {/* Add any other installed models that are not in the recommended list */}
                   {installedModels.filter(m => ![
                     "qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "phi3.5:mini", "llama3.1:8b"
                   ].includes(m)).map(m => (
-                    <option key={m} value={m}>📦 {m} (Other Local)</option>
+                    <option key={m} value={m}>📦 {m} (Downloaded)</option>
                   ))}
                 </select>
               </div>
@@ -538,7 +569,7 @@ export default function App() {
 
             {/* Model downloading progress */}
             {isSettingUpModel && (
-              <div style={{ marginTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem' }}>
+              <div style={{ marginTop: '0.25rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.75rem' }}>
                 <p style={{ color: 'var(--warning)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
                   ⏳ {setupStatusText}
                 </p>
@@ -550,6 +581,55 @@ export default function App() {
                 </p>
               </div>
             )}
+
+            {/* Storage path config */}
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem' }}>
+              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                📦 Models Storage Path:
+              </label>
+              
+              {storageInfo.available_drives.length > 0 && (
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+                  {storageInfo.available_drives.map(drive => (
+                    <button
+                      key={drive}
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{
+                        padding: '0.3rem 0.75rem',
+                        fontSize: '0.8rem',
+                        border: customModelPath.startsWith(drive) ? '1.5px solid var(--accent-primary)' : undefined,
+                        opacity: customModelPath.startsWith(drive) ? 1 : 0.7
+                      }}
+                      onClick={() => setCustomModelPath(drive + '\\OllamaModels')}
+                      disabled={isSettingUpModel}
+                    >
+                      {drive} {drive.startsWith('D') ? '⭐' : ''}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input
+                  type="text"
+                  className="form-control"
+                  style={{ borderRadius: '8px', fontSize: '0.85rem', flexGrow: 1 }}
+                  value={customModelPath}
+                  onChange={(e) => setCustomModelPath(e.target.value)}
+                  disabled={isSettingUpModel}
+                  placeholder="e.g. D:\OllamaModels"
+                />
+                <button 
+                  className="btn" 
+                  style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }} 
+                  onClick={saveStoragePath}
+                  disabled={isSettingUpModel}
+                >
+                  Save Path
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
