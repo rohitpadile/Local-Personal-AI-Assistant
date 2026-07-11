@@ -10,7 +10,9 @@ import {
   MessageCircle,
   Brain,
   Send,
-  Sliders
+  Sliders,
+  Download,
+  Power
 } from 'lucide-react';
 
 const API_BASE = window.location.origin.includes("localhost:5173") ? "http://localhost:8000/api" : window.location.origin + "/api";
@@ -198,6 +200,19 @@ export default function App() {
       }
     } catch (err) {
       alert("Failed to save storage path: " + err.message);
+    }
+  };
+
+  const handleShutdown = async () => {
+    if (!window.confirm("This will terminate your backend server and Supertonic voice server. You will need to double-click run_peace.bat to start them again. Proceed?")) return;
+    
+    try {
+      const res = await fetch(`${API_BASE}/shutdown`, { method: 'POST' });
+      if (res.ok) {
+        alert("All servers shut down successfully. You can close this browser tab now.");
+      }
+    } catch (err) {
+      alert("Failed to send shutdown command: " + err.message);
     }
   };
 
@@ -641,6 +656,7 @@ export default function App() {
                   placeholder="e.g. D:\OllamaModels"
                 />
                 <button 
+                  type="button"
                   className="btn" 
                   style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }} 
                   onClick={saveStoragePath}
@@ -649,6 +665,30 @@ export default function App() {
                   Save Path
                 </button>
               </div>
+            </div>
+
+            {/* Shutdown Server */}
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem', marginTop: '0.5rem', display: 'flex', justifyContent: 'flex-end' }}>
+              <button 
+                type="button"
+                className="btn" 
+                style={{
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1.5px solid var(--danger)',
+                  color: 'var(--danger)',
+                  fontSize: '0.82rem',
+                  padding: '0.45rem 1rem',
+                  borderRadius: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  fontWeight: '600'
+                }}
+                onClick={handleShutdown}
+                disabled={isSettingUpModel}
+              >
+                <Power size={14} /> Terminate All Servers
+              </button>
             </div>
           </div>
         </div>

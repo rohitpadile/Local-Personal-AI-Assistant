@@ -260,8 +260,18 @@ def process_chat(req: ChatRequest):
     if not user_msg:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
         
+    # Ensure the model is installed locally, otherwise fallback to the first available model
+    installed_models = setup_manager.get_installed_models()
+    active_model = req.model
+    if installed_models:
+        if active_model not in installed_models:
+            print(f"[OLLAMA WARNING] Requested model '{active_model}' not found locally. Falling back to '{installed_models[0]}'.")
+            active_model = installed_models[0]
+    else:
+        raise HTTPException(status_code=400, detail="No models installed in Ollama. Please go to Settings to download a model.")
+
     # 1. Query local memories (semantic search)
-    log_debug(f"Chat request: '{user_msg}' using {req.model}")
+    log_debug(f"Chat request: '{user_msg}' using {active_model}")
     memories = memory_helper.search_memories(user_msg, limit=4)
     
     # Format memories context
@@ -281,7 +291,7 @@ def process_chat(req: ChatRequest):
         "Always speak in a warm, caring, and wise tone.\n\n"
         f"CRITICAL USER CONTEXT:\n{memories_context}\n\n"
         "Guidelines:\n"
-        "1. Respond directly and conversationally. Keep your responses relatively concise but deeply caring (suitable to be read aloud).\n"
+        "1. Respond directly and conversationally. STRICT REQUIREMENT: Keep your responses extremely short (strictly 1 to 2 sentences max) for real-time snappy voice replies.\n"
         "2. If the user shares any personal facts, preferences, emotional states, or stories about themselves, you MUST note it for memory. "
         "At the very end of your response, write what you want to remember about them inside `<remember>...</remember>` tags. "
         "Example: If they say 'I am feeling anxious about my new job', your response should end with `<remember>User feels anxious about their new job</remember>`. "
@@ -292,7 +302,7 @@ def process_chat(req: ChatRequest):
     )
 
     payload = {
-        "model": req.model,
+        "model": active_model,
         "prompt": f"{system_prompt}\n\nUser: '{user_msg}'\n\nPeace:",
         "stream": False
     }
@@ -359,12 +369,21 @@ def process_chat(req: ChatRequest):
 @app.post("/api/shutdown")
 def shutdown_server():
     log_debug("Shutdown requested via API")
+    
+    # Terminate local Supertonic server
+    try:
+        import subprocess
+        subprocess.run(["taskkill", "/f", "/im", "supertonic.exe"], capture_output=True)
+        print("[SHUTDOWN] Terminated Supertonic TTS server.")
+    except Exception as e:
+        print(f"[SHUTDOWN WARNING] Failed to kill Supertonic process: {e}")
+
     import signal
     def kill_process():
         time.sleep(0.5)
         os.kill(os.getpid(), signal.SIGTERM)
     threading.Thread(target=kill_process, daemon=True).start()
-    return {"status": "success", "message": "Server shutting down..."}
+    return {"status": "success", "message": "All servers are shutting down..."}
 
 # Mount WAV speech files directory
 if getattr(sys, 'frozen', False):
