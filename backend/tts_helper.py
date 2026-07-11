@@ -46,7 +46,7 @@ def generate_speech_file(text: str, filename: str = "response.wav", voice: str =
     
     try:
         print(f"[TTS] Requesting audio from Supertonic (Voice: {voice}): '{text[:40]}...'")
-        response = requests.post(SUPERTONIC_URL, json=payload, timeout=10)
+        response = requests.post(SUPERTONIC_URL, json=payload, timeout=30)
         
         if response.status_code == 200:
             output_path = os.path.join(CACHE_DIR, filename)

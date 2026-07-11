@@ -313,7 +313,7 @@ def process_chat(req: ChatRequest):
             f"{OLLAMA_URL}/api/generate",
             data=body_bytes,
             headers={"Content-Type": "application/json; charset=utf-8"},
-            timeout=120
+            timeout=300
         )
         
         if response.status_code != 200:
