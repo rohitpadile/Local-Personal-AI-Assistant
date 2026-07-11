@@ -226,11 +226,32 @@ export default function App() {
     await processMessage(textToSend);
   };
 
+  const playThinkingSound = () => {
+    if (activeAudioRef.current) {
+      try { activeAudioRef.current.pause(); } catch(_) {}
+      activeAudioRef.current = null;
+    }
+    if (window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    
+    // Choose voice style matching gender F1 (female) or M4 (male)
+    const voiceGender = selectedVoice.startsWith("M") ? "M4" : "F1";
+    const fullUrl = API_BASE.replace('/api', '') + `/static/thinking_${voiceGender}.wav`;
+    const audio = new Audio(fullUrl);
+    activeAudioRef.current = audio;
+    audio.play().catch(err => {
+      console.log("Thinking sound play blocked by browser autoplay policy.", err);
+    });
+  };
+
   const processMessage = async (text) => {
     const userMsgObj = { sender: "user", text, timestamp: new Date().toISOString() };
     setMessages(prev => [...prev, userMsgObj]);
     setIsProcessing(true);
     setProcessingStep("Peace is thinking...");
+    
+    playThinkingSound(); // Play instant thinking audio
 
     try {
       const res = await fetch(`${API_BASE}/chat`, {

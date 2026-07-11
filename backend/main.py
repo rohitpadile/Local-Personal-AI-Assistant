@@ -394,6 +394,24 @@ else:
 os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="tts_static")
 
+# Pre-generate thinking voice audio files on startup if missing
+def pregenerate_thinking_files():
+    time.sleep(5)  # Wait for Supertonic server to start headlessly
+    try:
+        f_path = os.path.join(static_dir, "thinking_F1.wav")
+        if not os.path.exists(f_path):
+            print("[STARTUP] Pre-generating female thinking audio...")
+            tts_helper.generate_speech_file("Hmm, let me think about that...", "thinking_F1.wav", voice="F1")
+            
+        m_path = os.path.join(static_dir, "thinking_M4.wav")
+        if not os.path.exists(m_path):
+            print("[STARTUP] Pre-generating male thinking audio...")
+            tts_helper.generate_speech_file("Hmm, let me think about that...", "thinking_M4.wav", voice="M4")
+    except Exception as pregen_err:
+        print(f"[STARTUP WARNING] Failed to pre-generate thinking files: {pregen_err}")
+
+threading.Thread(target=pregenerate_thinking_files, daemon=True).start()
+
 # Serve React Frontend static assets
 if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
     frontend_dist = os.path.join(sys._MEIPASS, "frontend", "dist")
