@@ -23,6 +23,11 @@ export default function App() {
   const [installedModels, setInstalledModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState("qwen2.5:1.5b");
   
+  // Model Pulling States
+  const [isSettingUpModel, setIsSettingUpModel] = useState(false);
+  const [setupProgress, setSetupProgress] = useState(0);
+  const [setupStatusText, setSetupStatusText] = useState("");
+  
   // Chat & Memory States
   const [messages, setMessages] = useState([
     { 
@@ -98,6 +103,70 @@ export default function App() {
       }
     } catch (err) {
       console.error("Error fetching memories:", err);
+    }
+  };
+
+  const pullModel = async (modelId) => {
+    const modelToUse = modelId || selectedModel;
+    if (modelId) setSelectedModel(modelId);
+    setIsSettingUpModel(true);
+    setSetupProgress(0);
+    setSetupStatusText(`Downloading ${modelToUse}... This can take a few minutes.`);
+    
+    try {
+      const response = await fetch(`${API_BASE}/setup/pull-model?model=${modelToUse}`);
+      if (!response.ok) throw new Error("Failed to start pull model stream");
+      
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const payload = JSON.parse(line);
+              if (payload.status === "downloading" && payload.total) {
+                const percent = Math.round((payload.completed / payload.total) * 100);
+                const mbDone = (payload.completed / 1024 / 1024).toFixed(0);
+                const mbTotal = (payload.total / 1024 / 1024).toFixed(0);
+                setSetupProgress(percent);
+                setSetupStatusText(`Downloading: ${mbDone} MB / ${mbTotal} MB (${percent}%)`);
+              } else if (payload.status === "pulling manifest") {
+                setSetupStatusText("Connecting to Ollama library...");
+                setSetupProgress(0);
+              } else if (payload.status && payload.status.startsWith("pulling ")) {
+                setSetupStatusText(`Pulling model layers...`);
+                setSetupProgress(1);
+              } else if (payload.status === "verifying sha256 digest") {
+                setSetupProgress(99);
+                setSetupStatusText("Verifying download integrity...");
+              } else if (payload.status === "writing manifest") {
+                setSetupProgress(99);
+                setSetupStatusText("Finalizing model...");
+              } else if (payload.status === "success") {
+                setSetupProgress(100);
+                setSetupStatusText("Model downloaded successfully!");
+              } else if (payload.status) {
+                setSetupStatusText(payload.status);
+              }
+            } catch (e) {}
+          }
+        }
+      }
+      
+      await fetchStatus();
+      setIsSettingUpModel(false);
+    } catch (err) {
+      alert("Error pulling model: " + err.message);
+      setIsSettingUpModel(false);
     }
   };
 
@@ -415,34 +484,72 @@ export default function App() {
             <Sliders size={16} color="var(--accent-secondary)" /> Companion Configuration
           </h3>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem' }}>
-            <div className="form-group" style={{ flex: '1', minWidth: '200px' }}>
-              <label>Ollama Model:</label>
-              {installedModels.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'flex-end' }}>
+              <div className="form-group" style={{ flex: '1', minWidth: '220px' }}>
+                <label>Select AI Model:</label>
                 <select 
                   className="form-control" 
                   value={selectedModel}
                   onChange={(e) => setSelectedModel(e.target.value)}
+                  disabled={isSettingUpModel}
                 >
-                  {installedModels.map(m => (
-                    <option key={m} value={m}>{m}</option>
+                  {/* Recommended list */}
+                  <option value="qwen2.5:0.5b">⚡ Qwen 2.5 0.5B — 400 MB (Fastest)</option>
+                  <option value="qwen2.5:1.5b">🌟 Qwen 2.5 1.5B — 1 GB (Recommended)</option>
+                  <option value="qwen2.5:3b">✅ Qwen 2.5 3B — 2 GB (Accurate)</option>
+                  <option value="phi3.5:mini">🔵 Phi 3.5 Mini — 2.2 GB (Conversational)</option>
+                  <option value="llama3.1:8b">🔴 Llama 3.1 8B — 4.7 GB (High Quality)</option>
+                  
+                  {/* Add any other installed models that are not in the recommended list */}
+                  {installedModels.filter(m => ![
+                    "qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5:3b", "phi3.5:mini", "llama3.1:8b"
+                  ].includes(m)).map(m => (
+                    <option key={m} value={m}>📦 {m} (Other Local)</option>
                   ))}
                 </select>
-              ) : (
-                <input
-                  type="text"
-                  className="form-control"
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  placeholder="e.g. qwen2.5:1.5b"
-                />
-              )}
+              </div>
+              
+              <div style={{ display: 'flex', gap: '0.5rem', flex: '1', minWidth: '180px' }}>
+                {installedModels.includes(selectedModel) ? (
+                  <div className="badge badge-success" style={{ width: '100%', justifyContent: 'center', padding: '0.6rem', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid var(--success)', borderRadius: '6px', color: 'var(--success)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    ✓ Ready to Use
+                  </div>
+                ) : (
+                  <button 
+                    className="btn" 
+                    style={{ width: '100%' }}
+                    onClick={() => pullModel()}
+                    disabled={isSettingUpModel}
+                  >
+                    <Download size={14} style={{ marginRight: '4px' }} /> Download Model
+                  </button>
+                )}
+                <button 
+                  className="btn btn-secondary" 
+                  onClick={fetchStatus} 
+                  style={{ width: '44px', height: '40px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  disabled={isSettingUpModel}
+                >
+                  <RefreshCw size={14} />
+                </button>
+              </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: '1', minWidth: '180px', marginTop: '1.2rem' }}>
-              <button className="btn btn-secondary" onClick={fetchStatus} style={{ width: '100%' }}>
-                <RefreshCw size={14} /> Refresh Models
-              </button>
-            </div>
+
+            {/* Model downloading progress */}
+            {isSettingUpModel && (
+              <div style={{ marginTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem' }}>
+                <p style={{ color: 'var(--warning)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+                  ⏳ {setupStatusText}
+                </p>
+                <div className="progress-container">
+                  <div className="progress-bar" style={{ width: `${setupProgress}%` }}></div>
+                </div>
+                <p style={{ color: 'var(--accent-secondary)', fontWeight: 'bold', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+                  {setupProgress}%
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}
