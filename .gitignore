@@ -1,0 +1,74 @@
+# --- Python Environment & Packaging ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- Build Artifacts ---
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+*.manifest
+*.spec
+
+# --- Node & Frontend ---
+node_modules/
+frontend/dist/
+frontend/build/
+npm-debug.log
+yarn-error.log
+frontend/.eslintcache
+
+# --- Local Databases & Ledgers ---
+*.xlsx
+*.csv
+*.db
+*.sqlite3
+
+# --- AI Models & Heavy Data ---
+# Ignore Ollama's local downloads and cache
+.ollama/
+*models/
+*.bin
+*.gguf
+backend/whisper-model*/
+backend/whisper-small*/
+backend/whisper-model/
+
+# --- Hugging Face & Cache Overrides ---
+.cache/
+huggingface/
+.huggingface/
+pip-cache/
+.pytest_cache/
+
+# --- Heavy Runtime Bundles ---
+python_runtime/
+*.exe
+
+# --- Logs ---
+*.log
+stderr.log
+stdout.log
+backend/app_debug.log
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- IDEs / Editors ---
+.idea/
+.vscode/
+*.swp

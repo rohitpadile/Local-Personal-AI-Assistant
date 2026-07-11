@@ -1,0 +1,920 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Mic, 
+  Square, 
+  Settings, 
+  BookOpen, 
+  RefreshCw, 
+  AlertTriangle, 
+  CheckCircle, 
+  Download, 
+  HelpCircle, 
+  Sliders, 
+  Power, 
+  Send, 
+  Trash2, 
+  Plus, 
+  Heart,
+  MessageCircle,
+  Brain
+} from 'lucide-react';
+
+const API_BASE = window.location.origin.includes("localhost:5173") ? "http://localhost:8000/api" : window.location.origin + "/api";
+
+export default function App() {
+  // Setup States
+  const [setupStatus, setSetupStatus] = useState({
+    ollama_running: false,
+    ollama_installed: false,
+    installed_models: [],
+    recommended_models: [],
+    models_path: ''
+  });
+  const [selectedModel, setSelectedModel] = useState("qwen2.5:1.5b");
+  const [isSettingUpModel, setIsSettingUpModel] = useState(false);
+  const [setupProgress, setSetupProgress] = useState(0);
+  const [setupStatusText, setSetupStatusText] = useState("");
+  const [storageInfo, setStorageInfo] = useState({ models_path: '', available_drives: [] });
+  const [customModelPath, setCustomModelPath] = useState('');
+  const [storageConfigured, setStorageConfigured] = useState(false);
+  
+  // App Navigation States
+  const [activeTab, setActiveTab] = useState("chat"); // chat | memories
+  const [showSettings, setShowSettings] = useState(false);
+  
+  // Chat & Memory States
+  const [messages, setMessages] = useState([
+    { 
+      sender: "peace", 
+      text: "Hello. I am Peace, your personal companion. I am here to listen, offer guidance, and keep your thoughts completely private. How are you feeling today?", 
+      timestamp: new Date().toISOString() 
+    }
+  ]);
+  const [inputText, setInputText] = useState("");
+  const [memories, setMemories] = useState([]);
+  const [newMemoryText, setNewMemoryText] = useState("");
+  
+  // Voice Recording States
+  const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStep, setProcessingStep] = useState(""); // transcribing | thinking
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [debugInfo, setDebugInfo] = useState("");
+  const [micVolume, setMicVolume] = useState(Array(15).fill(4));
+
+  // Audio Playback Ref
+  const activeAudioRef = useRef(null);
+
+  // Media Recorder Refs
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const dataArrayRef = useRef(null);
+  const animationFrameRef = useRef(null);
+  const speechRecRef = useRef(null);
+  const chatEndRef = useRef(null);
+
+  // Load Setup Status and Memories
+  useEffect(() => {
+    fetchSetupStatus();
+    fetchMemories();
+  }, []);
+
+  // Scroll to bottom of chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isProcessing]);
+
+  const fetchSetupStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/setup/status`);
+      if (res.ok) {
+        const data = await res.json();
+        setSetupStatus(data);
+        if (data.models_path) {
+          setCustomModelPath(data.models_path);
+          setStorageConfigured(true);
+        }
+        if (data.installed_models.length > 0 && !data.installed_models.includes(selectedModel)) {
+          setSelectedModel(data.installed_models[0]);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching setup status:", err);
+    }
+    
+    try {
+      const sRes = await fetch(`${API_BASE}/setup/storage`);
+      if (sRes.ok) {
+        const sData = await sRes.json();
+        setStorageInfo(sData);
+        if (!customModelPath) setCustomModelPath(sData.models_path);
+        setStorageConfigured(true);
+      }
+    } catch (err) {
+      console.error("Error fetching storage info:", err);
+    }
+  };
+
+  const fetchMemories = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/memories`);
+      if (res.ok) {
+        const data = await res.json();
+        setMemories(data);
+      }
+    } catch (err) {
+      console.error("Error fetching memories:", err);
+    }
+  };
+
+  const startOllama = async () => {
+    try {
+      setSetupStatusText("Starting Ollama background process...");
+      const res = await fetch(`${API_BASE}/setup/install`, { method: 'POST' });
+      if (res.ok) {
+        setTimeout(fetchSetupStatus, 3000);
+      }
+    } catch (err) {
+      alert("Failed to connect to backend. Make sure your FastAPI backend is running.");
+    }
+  };
+
+  const saveStoragePath = async () => {
+    try {
+      const path = customModelPath.trim();
+      if (!path) return;
+      const res = await fetch(`${API_BASE}/setup/storage?path=${encodeURIComponent(path)}`, { method: 'POST' });
+      if (res.ok) {
+        setStorageConfigured(true);
+        await fetchSetupStatus();
+      }
+    } catch (err) {
+      alert("Failed to save storage path: " + err.message);
+    }
+  };
+
+  const pullModel = async (modelId) => {
+    const modelToUse = modelId || selectedModel;
+    if (modelId) setSelectedModel(modelId);
+    setIsSettingUpModel(true);
+    setSetupProgress(0);
+    setSetupStatusText(`Downloading ${modelToUse}... This can take a few minutes.`);
+    
+    try {
+      const response = await fetch(`${API_BASE}/setup/pull-model?model=${modelToUse}`);
+      if (!response.ok) throw new Error("Failed to start pull model stream");
+      
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const payload = JSON.parse(line);
+              if (payload.status === "downloading" && payload.total) {
+                const percent = Math.round((payload.completed / payload.total) * 100);
+                const mbDone = (payload.completed / 1024 / 1024).toFixed(0);
+                const mbTotal = (payload.total / 1024 / 1024).toFixed(0);
+                setSetupProgress(percent);
+                setSetupStatusText(`Downloading: ${mbDone} MB / ${mbTotal} MB (${percent}%)`);
+              } else if (payload.status === "pulling manifest") {
+                setSetupStatusText("Connecting to Ollama library...");
+                setSetupProgress(0);
+              } else if (payload.status && payload.status.startsWith("pulling ")) {
+                setSetupStatusText(`Pulling model layers...`);
+                setSetupProgress(1);
+              } else if (payload.status === "verifying sha256 digest") {
+                setSetupProgress(99);
+                setSetupStatusText("Verifying download integrity...");
+              } else if (payload.status === "writing manifest") {
+                setSetupProgress(99);
+                setSetupStatusText("Finalizing model...");
+              } else if (payload.status === "success") {
+                setSetupProgress(100);
+                setSetupStatusText("Model downloaded successfully!");
+              } else if (payload.status) {
+                setSetupStatusText(payload.status);
+              }
+            } catch (e) {}
+          }
+        }
+      }
+      
+      await fetchSetupStatus();
+      setIsSettingUpModel(false);
+    } catch (err) {
+      alert("Error pulling model: " + err.message);
+      setIsSettingUpModel(false);
+    }
+  };
+
+  // Conversational Send Handler
+  const handleSend = async (e) => {
+    if (e) e.preventDefault();
+    const textToSend = inputText.trim();
+    if (!textToSend || isProcessing) return;
+
+    setInputText("");
+    await processMessage(textToSend);
+  };
+
+  const processMessage = async (text) => {
+    // Add user message to UI
+    const userMsgObj = { sender: "user", text, timestamp: new Date().toISOString() };
+    setMessages(prev => [...prev, userMsgObj]);
+    setIsProcessing(true);
+    setProcessingStep("Peace is thinking...");
+
+    try {
+      const res = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, model: selectedModel })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        
+        // Add AI response to UI
+        const aiMsgObj = { 
+          sender: "peace", 
+          text: data.response, 
+          timestamp: new Date().toISOString(),
+          audioUrl: data.audio_url 
+        };
+        setMessages(prev => [...prev, aiMsgObj]);
+        
+        // Trigger voice feedback
+        speakResponse(data.response, data.audio_url);
+        
+        // Refresh memories in background in case any new ones were auto-extracted
+        fetchMemories();
+      } else {
+        alert("Oops, Peace failed to process that. Please check if Ollama is running.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to communicate with local AI backend.");
+    } finally {
+      setIsProcessing(false);
+      setProcessingStep("");
+    }
+  };
+
+  // Speaks response (Prepares Supertonic WAV or falls back to Web Speech API)
+  const speakResponse = (text, audioUrl) => {
+    // Stop any current voice
+    if (activeAudioRef.current) {
+      activeAudioRef.current.pause();
+      activeAudioRef.current = null;
+    }
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    if (audioUrl) {
+      // Play local WAV generated by Supertonic
+      const fullAudioUrl = API_BASE.replace('/api', '') + audioUrl;
+      const audio = new Audio(fullAudioUrl);
+      activeAudioRef.current = audio;
+      audio.play().catch(err => {
+        console.warn("Local speech WAV playback blocked or failed, falling back to browser synthesis.", err);
+        speakBrowserFallback(text);
+      });
+    } else {
+      speakBrowserFallback(text);
+    }
+  };
+
+  const speakBrowserFallback = (text) => {
+    if ('speechSynthesis' in window) {
+      const utterance = new SynthesisUtteranceFallback(text);
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  const SynthesisUtteranceFallback = function(text) {
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.lang = 'en-US';
+    // Try to find a nice gentle voice
+    const voices = window.speechSynthesis.getVoices();
+    const gentleVoice = voices.find(v => v.name.includes("Natural") || v.name.includes("Google") || v.name.includes("Hazel") || v.name.includes("Zira"));
+    if (gentleVoice) {
+      utt.voice = gentleVoice;
+    }
+    return utt;
+  };
+
+  // Audio Recording handlers
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
+
+  const startRecording = async () => {
+    setLiveTranscript("");
+    setDebugInfo("Activating microphone...");
+    audioChunksRef.current = [];
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorderRef.current.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setDebugInfo("Processing audio...");
+        stream.getTracks().forEach(track => track.stop());
+        
+        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+        if (audioContextRef.current) audioContextRef.current.close();
+        
+        processAudio(audioBlob);
+      };
+
+      // Mic visualizer
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      const source = audioContextRef.current.createMediaStreamSource(stream);
+      analyserRef.current = audioContextRef.current.createAnalyser();
+      analyserRef.current.fftSize = 64;
+      source.connect(analyserRef.current);
+      
+      const bufferLength = analyserRef.current.frequencyBinCount;
+      dataArrayRef.current = new Uint8Array(bufferLength);
+      
+      const updateVisualizer = () => {
+        if (!analyserRef.current) return;
+        analyserRef.current.getByteFrequencyData(dataArrayRef.current);
+        const heights = Array.from(dataArrayRef.current)
+          .slice(0, 15)
+          .map(val => Math.max(4, Math.round((val / 255) * 24)));
+        setMicVolume(heights.length ? heights : Array(15).fill(4));
+        animationFrameRef.current = requestAnimationFrame(updateVisualizer);
+      };
+      
+      updateVisualizer();
+      mediaRecorderRef.current.start(250);
+      setIsRecording(true);
+      setDebugInfo("Microphone active. Whisper is ready to transcribe.");
+
+      // Browser live speech recognition for visual feedback
+      const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRec) {
+        const rec = new SpeechRec();
+        rec.continuous = true;
+        rec.interimResults = true;
+        rec.lang = 'en-US';
+        rec.onresult = (e) => {
+          let interim = '';
+          let final = '';
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            if (e.results[i].isFinal) final += e.results[i][0].transcript;
+            else interim += e.results[i][0].transcript;
+          }
+          setLiveTranscript((prev) => (final ? prev + final + ' ' : prev) + interim);
+        };
+        rec.start();
+        speechRecRef.current = rec;
+      }
+    } catch (err) {
+      setDebugInfo("Failed to open microphone. Check browser permissions.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      if (speechRecRef.current) {
+        try { speechRecRef.current.stop(); } catch (_) {}
+        speechRecRef.current = null;
+      }
+      setIsRecording(false);
+      setIsProcessing(true);
+      setProcessingStep("Transcribing speech...");
+    }
+  };
+
+  const processAudio = async (audioBlob) => {
+    setProcessingStep("🎤 Transcribing speech offline with Whisper...");
+    const formData = new FormData();
+    formData.append("file", audioBlob, "voice_input.webm");
+    
+    try {
+      const res = await fetch(`${API_BASE}/transcribe`, {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        const whisperText = data.transcription;
+        if (whisperText) {
+          setDebugInfo(`Heard: "${whisperText}"`);
+          await processMessage(whisperText);
+        } else {
+          setDebugInfo("No speech detected. Speak a bit louder.");
+          setIsProcessing(false);
+        }
+      } else {
+        alert("Whisper transcription failed.");
+        setIsProcessing(false);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Network error transcribing audio.");
+      setIsProcessing(false);
+    }
+  };
+
+  // Add custom manual memory
+  const handleAddMemory = async (e) => {
+    e.preventDefault();
+    if (!newMemoryText.trim()) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/memories/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: newMemoryText, category: "manual" })
+      });
+      if (res.ok) {
+        setNewMemoryText("");
+        fetchMemories();
+      }
+    } catch (err) {
+      alert("Failed to save memory.");
+    }
+  };
+
+  // Delete memory
+  const handleDeleteMemory = async (id) => {
+    if (!window.confirm("Are you sure you want Peace to forget this fact?")) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/memories/${id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        fetchMemories();
+      }
+    } catch (err) {
+      alert("Failed to delete memory.");
+    }
+  };
+
+  const handleShutdown = async () => {
+    if (window.confirm("Shut down the Peace backend companion?")) {
+      try {
+        await fetch(`${API_BASE}/shutdown`, { method: 'POST' });
+        alert("Peace backend has stopped. You can close this window.");
+      } catch (err) {
+        alert("Companion shutdown successfully!");
+      }
+    }
+  };
+
+  const isModelReady = setupStatus.installed_models.includes(selectedModel);
+  const isOllamaRunning = setupStatus.ollama_running;
+
+  return (
+    <div className="app-container">
+      {/* 1. Setup Overlay Screens */}
+      {(!isOllamaRunning || !isModelReady || isSettingUpModel) && (
+        <div className="setup-overlay">
+          <div className="setup-box">
+            <div className="logo-badge" style={{ width: '48px', height: '48px', margin: '0 auto 1.5rem' }}>
+              <Heart size={24} />
+            </div>
+            
+            {!storageConfigured ? (
+              <>
+                <h2 style={{ marginBottom: '0.5rem' }}>📦 Choose Storage for Local Brain</h2>
+                <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+                  AI models are large (several GBs). Select a drive to store them.
+                </p>
+
+                {storageInfo.available_drives.length > 0 && (
+                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+                    {storageInfo.available_drives.map(drive => (
+                      <button
+                        key={drive}
+                        className="btn btn-secondary"
+                        style={{
+                          padding: '0.4rem 0.9rem',
+                          border: customModelPath.startsWith(drive) ? '2px solid var(--accent-primary)' : undefined,
+                        }}
+                        onClick={() => setCustomModelPath(drive + '\\OllamaModels')}
+                      >
+                        {drive} {drive.startsWith('D') ? '⭐' : ''}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="form-group" style={{ textAlign: 'left', marginBottom: '1.5rem' }}>
+                  <label>Storage Path:</label>
+                  <input
+                    className="form-control"
+                    type="text"
+                    value={customModelPath}
+                    onChange={(e) => setCustomModelPath(e.target.value)}
+                  />
+                </div>
+
+                <button className="btn" onClick={saveStoragePath} style={{ width: '100%' }}>
+                  <Download size={16} /> Confirm Storage & Continue
+                </button>
+              </>
+            ) : !isOllamaRunning ? (
+              <>
+                <h2 style={{ marginBottom: '0.75rem' }}>Activate Offline AI</h2>
+                <p style={{ color: 'var(--text-muted)', marginBottom: '1rem', fontSize: '0.95rem' }}>
+                  Peace runs entirely offline. Launching the local Ollama service to start.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <button className="btn" onClick={startOllama}>
+                    <Play size={16} /> Start Local AI Engine
+                  </button>
+                  <button className="btn btn-secondary" onClick={fetchSetupStatus}>
+                    <RefreshCw size={16} /> Check Status
+                  </button>
+                </div>
+              </>
+            ) : isSettingUpModel ? (
+              <>
+                <h2 style={{ marginBottom: '0.5rem' }}>Downloading local intelligence...</h2>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{setupStatusText}</p>
+                <div className="progress-container">
+                  <div className="progress-bar" style={{ width: `${setupProgress}%` }}></div>
+                </div>
+                <p style={{ color: 'var(--accent-secondary)', fontWeight: 'bold' }}>{setupProgress}%</p>
+              </>
+            ) : (
+              <>
+                <h2 style={{ marginBottom: '0.75rem' }}>Model Download Required</h2>
+                <p style={{ color: 'var(--text-muted)', marginBottom: '1.25rem', fontSize: '0.95rem' }}>
+                  The model <strong>{selectedModel}</strong> needs to be downloaded locally to your computer.
+                </p>
+                <div className="form-group" style={{ textAlign: 'left', marginBottom: '1.5rem' }}>
+                  <label>Select AI Model size:</label>
+                  <select 
+                    className="form-control" 
+                    value={selectedModel} 
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                  >
+                    <option value="qwen2.5:0.5b">⚡ Qwen 2.5 0.5B — 400 MB (Very Fast)</option>
+                    <option value="qwen2.5:1.5b">🌟 Qwen 2.5 1.5B — 1 GB (Recommended)</option>
+                    <option value="qwen2.5:3b">✅ Qwen 2.5 3B — 2 GB (More Intelligent)</option>
+                    <option value="phi3.5:mini">🔵 Phi 3.5 Mini — 2.2 GB (Conversational)</option>
+                    <option value="llama3.1:8b">🔴 Llama 3.1 8B — 4.7 GB (Highest Quality)</option>
+                  </select>
+                </div>
+                <button className="btn" onClick={() => pullModel()} style={{ width: '100%' }}>
+                  <Download size={16} /> Download & Start
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 2. App Header */}
+      <header>
+        <div className="brand-section">
+          <div className="logo-badge">
+            <Heart size={20} />
+          </div>
+          <div>
+            <h1>Peace</h1>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Offline Personal Companion</p>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+          {/* Navigation Tabs */}
+          <div className="glass-card" style={{ flexDirection: 'row', padding: '0.25rem', gap: '0.25rem', borderRadius: '12px' }}>
+            <button 
+              className={`btn ${activeTab === 'chat' ? '' : 'btn-secondary'}`}
+              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', borderRadius: '8px' }}
+              onClick={() => setActiveTab('chat')}
+            >
+              <MessageCircle size={14} style={{ marginRight: '4px' }} /> Chat
+            </button>
+            <button 
+              className={`btn ${activeTab === 'memories' ? '' : 'btn-secondary'}`}
+              style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', borderRadius: '8px' }}
+              onClick={() => setActiveTab('memories')}
+            >
+              <Brain size={14} style={{ marginRight: '4px' }} /> Memories ({memories.length})
+            </button>
+          </div>
+
+          <button 
+            className={`btn btn-secondary ${showSettings ? 'active' : ''}`} 
+            style={{ padding: '0.5rem' }} 
+            onClick={() => setShowSettings(!showSettings)}
+          >
+            <Settings size={18} />
+          </button>
+        </div>
+      </header>
+
+      {/* Settings Panel */}
+      {showSettings && (
+        <div className="glass-card" style={{ marginBottom: '1.5rem', padding: '1.25rem' }}>
+          <h3 style={{ fontSize: '1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Sliders size={16} color="var(--accent-secondary)" /> Companion Configuration
+          </h3>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', marginBottom: '1.25rem' }}>
+            <div className="form-group" style={{ flex: '1', minWidth: '200px' }}>
+              <label>Active AI Model:</label>
+              <select 
+                className="form-control" 
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+              >
+                {setupStatus.installed_models.map(m => (
+                  <option key={m} value={m}>✅ {m} (Installed)</option>
+                ))}
+                {setupStatus.recommended_models.filter(m => !setupStatus.installed_models.includes(m)).map(m => (
+                  <option key={m} value={m}>⬇️ {m} (Needs Download)</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: '1', minWidth: '180px', marginTop: '1.2rem' }}>
+              {!isModelReady ? (
+                <button className="btn" onClick={() => pullModel()} style={{ width: '100%' }}>
+                  <Download size={14} /> Download Model
+                </button>
+              ) : (
+                <div className="badge badge-success" style={{ width: '100%', justifyContent: 'center', padding: '0.6rem' }}>
+                  <CheckCircle size={14} /> AI Model Ready
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '1rem' }}>
+            <div style={{ flex: 1, minWidth: '200px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              📦 <strong>Models directory:</strong> {customModelPath || setupStatus.models_path || 'D:\\OllamaModels'}
+            </div>
+            <button 
+              className="btn btn-secondary" 
+              onClick={handleShutdown} 
+              style={{ color: 'var(--danger)', borderColor: 'rgba(239, 68, 68, 0.2)', minWidth: '160px' }}
+            >
+              <Power size={14} /> Shutdown Companion
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Core App Grid */}
+      <div className="dashboard-grid">
+        
+        {/* Left Side: Mic Controller / Voice Input */}
+        <div className="glass-card assistant-panel" style={{ minHeight: '400px' }}>
+          <div className="card-title" style={{ alignSelf: 'flex-start' }}>
+            <Mic size={18} color="var(--accent-primary)" /> Speak to Peace
+          </div>
+          
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', maxWidth: '300px', margin: '0.5rem 0' }}>
+            Hold the mic button and share your thoughts. Peace will listen, transcribe, and talk back offline.
+          </p>
+
+          <div className="mic-container">
+            <button 
+              className={`mic-button ${isRecording ? 'recording' : ''}`}
+              onClick={toggleRecording}
+              disabled={isProcessing}
+            >
+              {isRecording ? <Square size={28} /> : <Mic size={32} />}
+            </button>
+            <div className="pulse-ring"></div>
+            <div className="pulse-ring"></div>
+            <div className="pulse-ring"></div>
+          </div>
+
+          <p style={{ fontWeight: '600', fontSize: '0.95rem', color: isRecording ? 'var(--danger)' : 'var(--text-muted)', marginBottom: '1rem' }}>
+            {isRecording ? "Listening... Click mic to stop" : "Click Mic to Talk"}
+          </p>
+
+          {/* Visual Waveform */}
+          <div className="waveform" style={{ marginBottom: '1.5rem' }}>
+            {micVolume.map((height, i) => (
+              <div 
+                key={i} 
+                className={`wave-bar ${isRecording ? 'recording-active' : isProcessing ? 'active' : ''}`} 
+                style={{ height: `${height}px` }}
+              />
+            ))}
+          </div>
+
+          {/* Transcript / Debug Info */}
+          {liveTranscript && isRecording && (
+            <div style={{
+              width: '100%',
+              background: 'rgba(139, 92, 246, 0.08)',
+              border: '1px solid rgba(139, 92, 246, 0.3)',
+              borderRadius: '10px',
+              padding: '0.75rem 1rem',
+              textAlign: 'left',
+              marginBottom: '1rem'
+            }}>
+              <span style={{ fontSize: '0.7rem', color: 'var(--accent-primary)', display: 'block', marginBottom: '0.2rem' }}>Hearing you...</span>
+              <p style={{ margin: 0, fontSize: '0.95rem', color: 'var(--text-main)' }}>{liveTranscript}</p>
+            </div>
+          )}
+
+          {debugInfo && (
+            <div style={{ 
+              fontSize: '0.8rem', 
+              color: 'var(--accent-secondary)', 
+              background: 'rgba(255,255,255,0.02)', 
+              border: '1px solid var(--border-color)',
+              padding: '0.5rem 0.75rem', 
+              borderRadius: '6px', 
+              width: '100%',
+              textAlign: 'center'
+            }}>
+              ℹ️ {debugInfo}
+            </div>
+          )}
+
+          {isProcessing && (
+            <div style={{ marginTop: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--warning)' }}>
+              <RefreshCw className="spinner" style={{ width: '16px', height: '16px' }} />
+              <span style={{ fontSize: '0.85rem' }}>{processingStep}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Right Side: Tab Contents (Chat or Memories) */}
+        <div className="glass-card" style={{ flexGrow: 1, minHeight: '500px', display: 'flex', flexDirection: 'column' }}>
+          
+          {activeTab === 'chat' ? (
+            /* CHAT INTERFACE */
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', flexGrow: 1 }}>
+              <div className="card-title" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', marginBottom: '1rem' }}>
+                <MessageCircle size={18} color="var(--accent-secondary)" /> Chat History
+              </div>
+              
+              {/* Message scroll container */}
+              <div style={{ 
+                flexGrow: 1, 
+                overflowY: 'auto', 
+                paddingRight: '0.5rem', 
+                marginBottom: '1.5rem', 
+                maxHeight: '380px',
+                minHeight: '250px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '1rem'
+              }}>
+                {messages.map((m, idx) => (
+                  <div 
+                    key={idx} 
+                    style={{ 
+                      alignSelf: m.sender === 'user' ? 'flex-end' : 'flex-start',
+                      maxWidth: '80%',
+                      background: m.sender === 'user' ? 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))' : 'rgba(255,255,255,0.04)',
+                      border: m.sender === 'user' ? 'none' : '1px solid var(--border-color)',
+                      borderRadius: m.sender === 'user' ? '18px 18px 2px 18px' : '18px 18px 18px 2px',
+                      padding: '0.75rem 1.1rem',
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                      position: 'relative'
+                    }}
+                  >
+                    <p style={{ margin: 0, fontSize: '0.98rem', lineHeight: '1.5', color: 'var(--text-main)' }}>{m.text}</p>
+                    <span style={{ 
+                      fontSize: '0.68rem', 
+                      color: m.sender === 'user' ? 'rgba(255,255,255,0.6)' : 'var(--text-muted)', 
+                      display: 'block', 
+                      textAlign: 'right', 
+                      marginTop: '0.35rem' 
+                    }}>
+                      {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                ))}
+                
+                {isProcessing && processingStep === "Peace is thinking..." && (
+                  <div style={{ alignSelf: 'flex-start', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', borderRadius: '18px 18px 18px 2px', padding: '0.75rem 1.1rem', display: 'flex', gap: '0.3rem' }}>
+                    <div className="pulse-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--text-muted)', animation: 'pulse-dot 1.2s infinite ease-in-out' }}></div>
+                    <div className="pulse-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--text-muted)', animation: 'pulse-dot 1.2s infinite ease-in-out 0.2s' }}></div>
+                    <div className="pulse-dot" style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--text-muted)', animation: 'pulse-dot 1.2s infinite ease-in-out 0.4s' }}></div>
+                  </div>
+                )}
+                <div ref={chatEndRef} />
+              </div>
+
+              {/* Chat Text Input Bar */}
+              <form onSubmit={handleSend} style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                <input
+                  type="text"
+                  className="form-control"
+                  style={{ borderRadius: '10px', height: '44px', flexGrow: 1 }}
+                  placeholder="Share what is on your mind..."
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  disabled={isProcessing}
+                />
+                <button 
+                  type="submit" 
+                  className="btn" 
+                  style={{ borderRadius: '10px', width: '44px', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+                  disabled={!inputText.trim() || isProcessing}
+                >
+                  <Send size={18} />
+                </button>
+              </form>
+            </div>
+          ) : (
+            /* MEMORIES INTERFACE */
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', flexGrow: 1 }}>
+              <div className="card-title">
+                <Brain size={18} color="var(--accent-primary)" /> Long-Term Memories
+              </div>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+                These are facts Peace has remembered about you from your conversations. Peace uses these for personalized guidance.
+              </p>
+
+              {/* Add manual memory form */}
+              <form onSubmit={handleAddMemory} style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                <input
+                  type="text"
+                  className="form-control"
+                  style={{ borderRadius: '8px', fontSize: '0.9rem' }}
+                  placeholder="Manually add a memory (e.g. My daughter's birthday is October 12)"
+                  value={newMemoryText}
+                  onChange={(e) => setNewMemoryText(e.target.value)}
+                />
+                <button type="submit" className="btn" style={{ padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  <Plus size={14} /> Add
+                </button>
+              </form>
+
+              {/* Memories list */}
+              <div style={{ overflowY: 'auto', flexGrow: 1, maxHeight: '320px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {memories.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '2rem', border: '1px dashed var(--border-color)', borderRadius: '12px', color: 'var(--text-muted)' }}>
+                    Peace doesn't have any memories of you yet. Talk to Peace or add one above!
+                  </div>
+                ) : (
+                  memories.map((m) => (
+                    <div 
+                      key={m.id} 
+                      style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'center', 
+                        padding: '0.75rem 1rem', 
+                        background: 'rgba(255,255,255,0.02)', 
+                        border: '1px solid var(--border-color)', 
+                        borderRadius: '10px' 
+                      }}
+                    >
+                      <div style={{ flexGrow: 1, marginRight: '1rem' }}>
+                        <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: '500' }}>{m.text}</p>
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                          Learned: {new Date(m.metadata.timestamp).toLocaleDateString()} · Source: {m.metadata.category}
+                        </span>
+                      </div>
+                      <button 
+                        className="btn btn-secondary" 
+                        style={{ padding: '0.35rem', color: 'var(--danger)', borderColor: 'transparent' }}
+                        onClick={() => handleDeleteMemory(m.id)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
