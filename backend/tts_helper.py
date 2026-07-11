@@ -1,16 +1,8 @@
 import os
 import sys
+import requests
 
-# Try importing supertonic
-try:
-    from supertonic import TTS
-    print("[TTS] Supertonic library found. Initializing...")
-    tts_engine = TTS(auto_download=True)
-    # Default to a friendly female/warm style or male style
-    tts_voice = tts_engine.get_voice_style(voice_name="F1")
-except Exception as e:
-    print(f"[TTS WARNING] Supertonic initialization failed: {e}. Will fallback to frontend speech synthesis.")
-    tts_engine = None
+SUPERTONIC_URL = "http://127.0.0.1:7788/v1/audio/speech"
 
 if getattr(sys, 'frozen', False):
     CACHE_DIR = os.path.join(os.path.dirname(sys.executable), "static")
@@ -21,24 +13,26 @@ else:
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 def generate_speech_file(text: str, filename: str = "response.wav"):
-    """Generates a wav speech file from text using Supertonic, if available."""
-    if tts_engine is None:
-        return None
+    """Generates a wav speech file from text by calling the local Supertonic API server."""
+    payload = {
+        "model": "supertonic-3",
+        "input": text,
+        "voice": "F1"  # "F1" for friendly female style, "M4" for male style
+    }
     
     try:
-        output_path = os.path.join(CACHE_DIR, filename)
-        # Synthesize using Supertonic (supporting English/Hindi if supported)
-        # We try to detect the language, default to "en"
-        lang = "en"
-        # If there is devanagari script in text, we can suggest "hi" if supertonic supports it
-        # (supertonic 3 supports 31 languages)
-        if any(ord(char) > 0x0900 and ord(char) < 0x097F for char in text):
-            lang = "hi"
-            
-        wav, duration = tts_engine.synthesize(text, voice_style=tts_voice, lang=lang)
-        tts_engine.save_audio(wav, output_path)
-        print(f"[TTS] Generated speech file at: {output_path} (Duration: {duration:.2f}s, Language: {lang})")
-        return filename
+        print(f"[TTS] Requesting audio from Supertonic: '{text[:40]}...'")
+        response = requests.post(SUPERTONIC_URL, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            output_path = os.path.join(CACHE_DIR, filename)
+            with open(output_path, "wb") as f:
+                f.write(response.content)
+            print(f"[TTS SUCCESS] Voice file saved: {output_path}")
+            return filename
+        else:
+            print(f"[TTS WARNING] Supertonic responded with error {response.status_code}: {response.text}")
+            return None
     except Exception as e:
-        print(f"[TTS ERROR] Failed to generate speech: {e}")
+        print(f"[TTS WARNING] Supertonic server not reachable (make sure it is running on port 7788): {e}")
         return None
