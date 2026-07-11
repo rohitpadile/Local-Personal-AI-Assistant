@@ -109,7 +109,7 @@ def get_whisper_model():
         from faster_whisper import WhisperModel
         log_debug("get_whisper_model: WhisperModel class imported")
         
-        WHISPER_MODEL = WhisperModel(model_path, device="cpu", compute_type="float32", cpu_threads=1)
+        WHISPER_MODEL = WhisperModel(model_path, device="cpu", compute_type="int8", cpu_threads=4)
         log_debug("get_whisper_model: WhisperModel instantiated successfully")
         print("[SUCCESS] Whisper model loaded successfully!")
     log_debug("get_whisper_model: return WHISPER_MODEL")
@@ -119,6 +119,7 @@ def get_whisper_model():
 class ChatRequest(BaseModel):
     message: str
     model: str = "qwen2.5:1.5b"
+    voice: Optional[str] = "F1"
 
 class MemoryRequest(BaseModel):
     text: str
@@ -226,7 +227,8 @@ async def transcribe_audio(file: UploadFile = File(...)):
         # Force Hindi/English fallback language support
         segments, info = whisper.transcribe(
             temp_path,
-            beam_size=5,
+            beam_size=1,
+            vad_filter=True,
             no_speech_threshold=0.6,
             log_prob_threshold=-1.0,
         )
@@ -323,7 +325,7 @@ def process_chat(req: ChatRequest):
         # 4. Generate local text-to-speech audio via Supertonic
         # Generate a unique filename for speech cache to avoid audio conflict
         speech_filename = f"speech_{int(time.time())}.wav"
-        audio_file = tts_helper.generate_speech_file(clean_text, speech_filename)
+        audio_file = tts_helper.generate_speech_file(clean_text, speech_filename, voice=req.voice)
         audio_url = f"/static/{audio_file}" if audio_file else None
 
         return {

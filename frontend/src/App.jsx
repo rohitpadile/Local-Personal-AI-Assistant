@@ -22,6 +22,7 @@ export default function App() {
   const [ollamaRunning, setOllamaRunning] = useState(true);
   const [installedModels, setInstalledModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState("qwen2.5:1.5b");
+  const [selectedVoice, setSelectedVoice] = useState("F1"); // Default to Friendly Female style
   
   // Model Pulling & Storage States
   const [isSettingUpModel, setIsSettingUpModel] = useState(false);
@@ -220,7 +221,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, model: selectedModel })
+        body: JSON.stringify({ message: text, model: selectedModel, voice: selectedVoice })
       });
 
       if (res.ok) {
@@ -515,7 +516,7 @@ export default function App() {
           </h3>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            {/* Model Selector */}
+            {/* Model Selector & Voice Selector */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.5rem', alignItems: 'flex-end' }}>
               <div className="form-group" style={{ flex: '1', minWidth: '220px' }}>
                 <label>Select AI Model:</label>
@@ -538,6 +539,25 @@ export default function App() {
                   ].includes(m)).map(m => (
                     <option key={m} value={m}>📦 {m} (Downloaded)</option>
                   ))}
+                </select>
+              </div>
+
+              <div className="form-group" style={{ flex: '1', minWidth: '200px' }}>
+                <label>Voice Style:</label>
+                <select 
+                  className="form-control" 
+                  value={selectedVoice}
+                  onChange={(e) => setSelectedVoice(e.target.value)}
+                  disabled={isSettingUpModel}
+                >
+                  <option value="F1">🌸 Friendly Female (F1)</option>
+                  <option value="F2">🌸 Gentle Female (F2)</option>
+                  <option value="F3">🌸 Empathetic Female (F3)</option>
+                  <option value="F4">🌸 Warm Female (F4)</option>
+                  <option value="M1">💼 Calm Male (M1)</option>
+                  <option value="M2">💼 Gentle Male (M2)</option>
+                  <option value="M3">💼 Friendly Male (M3)</option>
+                  <option value="M4">💼 Caring Male (M4 - Recommended)</option>
                 </select>
               </div>
               

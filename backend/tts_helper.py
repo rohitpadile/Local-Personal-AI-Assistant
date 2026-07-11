@@ -12,16 +12,16 @@ else:
 # Ensure static folder exists
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-def generate_speech_file(text: str, filename: str = "response.wav"):
+def generate_speech_file(text: str, filename: str = "response.wav", voice: str = "F1"):
     """Generates a wav speech file from text by calling the local Supertonic API server."""
     payload = {
         "model": "supertonic-3",
         "input": text,
-        "voice": "F1"  # "F1" for friendly female style, "M4" for male style
+        "voice": voice  # e.g., "F1", "M4"
     }
     
     try:
-        print(f"[TTS] Requesting audio from Supertonic: '{text[:40]}...'")
+        print(f"[TTS] Requesting audio from Supertonic (Voice: {voice}): '{text[:40]}...'")
         response = requests.post(SUPERTONIC_URL, json=payload, timeout=10)
         
         if response.status_code == 200:
